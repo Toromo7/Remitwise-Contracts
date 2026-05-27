@@ -948,20 +948,20 @@ fn test_add_member_already_exists() {
     client.init(&owner, &initial_members);
 
     // Try to add member1 again (they already exist from initialization)
-    let result = client.try_add_family_member(&owner, &member1, &FamilyRole::Admin);
+    let result = client.try_add_member(&owner, &member1, &FamilyRole::Admin, &0);
     assert_eq!(result, Err(Ok(Error::MemberAlreadyExists)));
 
     // Try to add owner (they already exist and are the owner)
-    let result = client.try_add_family_member(&owner, &owner, &FamilyRole::Admin);
+    let result = client.try_add_member(&owner, &owner, &FamilyRole::Admin, &0);
     assert_eq!(result, Err(Ok(Error::MemberAlreadyExists)));
 
     // Add a new member successfully
     let new_member = Address::generate(&env);
-    let result = client.try_add_family_member(&owner, &new_member, &FamilyRole::Member);
+    let result = client.try_add_member(&owner, &new_member, &FamilyRole::Member, &0);
     assert!(result.is_ok());
 
     // Try to add the same new member again
-    let result = client.try_add_family_member(&owner, &new_member, &FamilyRole::Admin);
+    let result = client.try_add_member(&owner, &new_member, &FamilyRole::Admin, &0);
     assert_eq!(result, Err(Ok(Error::MemberAlreadyExists)));
 }
 
@@ -3036,4 +3036,156 @@ fn test_set_proposal_expiry_validation() {
     // Test expiry zero
     let result = client.try_set_proposal_expiry(&owner, &0);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_pause_guard_coverage() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let recipient = Address::generate(&env);
+    let token = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone()];
+
+    client.init(&owner, &initial_members);
+
+    // Setup pause admin and pause
+    client.set_pause_admin(&owner, &owner);
+    assert!(!client.is_paused());
+    client.pause(&owner);
+    assert!(client.is_paused());
+
+    // 1. add_member
+    let result = client.try_add_member(&owner, &member2, &FamilyRole::Member, &100);
+    assert!(result.is_err());
+
+    // 2. update_spending_limit
+    let result = client.try_update_spending_limit(&owner, &member1, &200);
+    assert!(result.is_err());
+
+    // 3. configure_multisig
+    let signers = vec![&env, member1.clone()];
+    let result = client.try_configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &signers,
+        &1000,
+    );
+    assert!(result.is_err());
+
+    // 4. propose_transaction
+    let result = client.try_propose_transaction(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &TransactionData::Withdrawal(token.clone(), recipient.clone(), 100),
+    );
+    assert!(result.is_err());
+
+    // 5. sign_transaction
+    let result = client.try_sign_transaction(&owner, &1);
+    assert!(result.is_err());
+
+    // 6. withdraw
+    let result = client.try_withdraw(&owner, &token, &recipient, &100);
+    assert!(result.is_err());
+
+    // 7. propose_split_config_change
+    let result = client.try_propose_split_config_change(&owner, &25, &25, &25, &25);
+    assert!(result.is_err());
+
+    // 8. propose_role_change
+    let result = client.try_propose_role_change(&owner, &member1, &FamilyRole::Admin);
+    assert!(result.is_err());
+
+    // 9. propose_emergency_transfer
+    let result = client.try_propose_emergency_transfer(&owner, &token, &recipient, &100);
+    assert!(result.is_err());
+
+    // 10. propose_policy_cancellation
+    let result = client.try_propose_policy_cancellation(&owner, &1);
+    assert!(result.is_err());
+
+    // 11. configure_emergency
+    let result = client.try_configure_emergency(&owner, &1000, &3600, &0, &10000);
+    assert!(result.is_err());
+
+    // 12. set_emergency_mode
+    let result = client.try_set_emergency_mode(&owner, &true);
+    assert!(result.is_err());
+
+    // 13. add_family_member
+    let result = client.try_add_family_member(&owner, &member2, &FamilyRole::Member);
+    assert!(result.is_err());
+
+    // 14. remove_family_member
+    let result = client.try_remove_family_member(&owner, &member1);
+    assert!(result.is_err());
+
+    // 15. archive_old_transactions
+    let result = client.try_archive_old_transactions(&owner, &100);
+    assert!(result.is_err());
+
+    // 16. cleanup_expired_pending
+    let result = client.try_cleanup_expired_pending(&owner);
+    assert!(result.is_err());
+
+    // 17. set_role_expiry
+    let result = client.try_set_role_expiry(&owner, &member1, &Some(100));
+    assert!(result.is_err());
+
+    // 18. set_precision_spending_limit
+    let limit = PrecisionSpendingLimit {
+        limit: 1000,
+        min_precision: 1,
+        max_single_tx: 500,
+        enable_rollover: false,
+    };
+    let result = client.try_set_precision_spending_limit(&owner, &member1, &limit);
+    assert!(result.is_err());
+
+    // 19. cancel_transaction
+    let result = client.try_cancel_transaction(&owner, &1);
+    assert!(result.is_err());
+
+    // 20. set_proposal_expiry
+    let result = client.try_set_proposal_expiry(&owner, &86400);
+    assert!(result.is_err());
+
+    // 21. set_upgrade_admin
+    let result = client.try_set_upgrade_admin(&owner, &member2);
+    assert!(result.is_err());
+
+    // 22. set_version
+    let result = client.try_set_version(&owner, &2);
+    assert!(result.is_err());
+
+    // 23. batch_add_family_members
+    let batch_members = vec![
+        &env,
+        BatchMemberItem {
+            address: member2.clone(),
+            role: FamilyRole::Member,
+        },
+    ];
+    let result = client.try_batch_add_family_members(&owner, &batch_members);
+    assert!(result.is_err());
+
+    // 24. batch_remove_family_members
+    let addresses = vec![&env, member1.clone()];
+    let result = client.try_batch_remove_family_members(&owner, &addresses);
+    assert!(result.is_err());
+
+    // Unpause and verify that they succeed
+    client.unpause(&owner);
+    assert!(!client.is_paused());
+
+    // Test unpause then succeed: add_family_member should succeed now
+    let success = client.add_family_member(&owner, &member2, &FamilyRole::Member);
+    assert!(success);
 }
