@@ -727,4 +727,5 @@ impl Insurance {
 }
 
 #[cfg(test)]
+#[path = "test.rs"]
 mod test;
